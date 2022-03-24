@@ -203,7 +203,18 @@ public class ParseWord07 {
         for (int i = 0; i < table.getNumberOfRows(); i++) {
             row = table.getRow(i);
             cells = row.getTableCells();
-            listobj = checkThisTableIsNeedIterator(cells.get(0), map);
+
+            //此部分为修改的源代码
+            //作用 用于识别word中表格非第一列的循环语法
+             listobj = null;
+            int col = 0;
+            for (XWPFTableCell cell : cells) {
+                listobj = this.checkThisTableIsNeedIterator(cell, map);
+                if (listobj != null) {
+                    break;
+                }
+                col++;
+            }
             if (listobj == null) {
                 parseThisRow(cells, map);
             } else if (listobj instanceof ExcelListEntity) {
@@ -211,7 +222,7 @@ public class ParseWord07 {
                 //删除之后要往上挪一行,然后加上跳过新建的行数
                 i = i + ((ExcelListEntity) listobj).getList().size() - 1;
             } else {
-                ExcelMapParse.parseNextRowAndAddRow(table, i, (List) listobj);
+                ExcelMapParse.parseNextRowAndAddRow(table, i, (List) listobj, col);
                 //删除之后要往上挪一行,然后加上跳过新建的行数
                 i = i + ((List) listobj).size() - 1;
             }

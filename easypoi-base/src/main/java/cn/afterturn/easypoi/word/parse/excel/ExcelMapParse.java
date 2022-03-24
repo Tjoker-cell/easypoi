@@ -15,16 +15,20 @@ package cn.afterturn.easypoi.word.parse.excel;
 
 import cn.afterturn.easypoi.entity.ImageEntity;
 import cn.afterturn.easypoi.excel.entity.params.ExcelForEachParams;
+import cn.afterturn.easypoi.util.PoiElUtil;
 import cn.afterturn.easypoi.util.PoiPublicUtil;
 import cn.afterturn.easypoi.util.PoiWordStyleUtil;
 import cn.afterturn.easypoi.word.entity.MyXWPFDocument;
+import com.google.common.base.Strings;
 import com.google.common.collect.Maps;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.poi.xwpf.usermodel.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -141,54 +145,59 @@ public final class ExcelMapParse {
      * @param index
      * @param list
      */
-    public static void parseNextRowAndAddRow(XWPFTable table, int index,
-                                             List<Object> list) throws Exception {
+
+    public static void parseNextRowAndAddRow(XWPFTable table, int index, List<Object> list, int col) throws Exception {
         XWPFTableRow currentRow = table.getRow(index);
-        //String[]                 params     = parseCurrentRowGetParams(currentRow);
-        List<ExcelForEachParams> paramsList = parseCurrentRowGetParamsEntity(currentRow);
-        String                   listname   = paramsList.get(0).getName();
-        boolean                  isCreate   = !listname.contains(FOREACH_NOT_CREATE);
-        listname = listname.replace(FOREACH_NOT_CREATE, EMPTY).replace(FOREACH_AND_SHIFT, EMPTY)
-                .replace(FOREACH, EMPTY).replace(START_STR, EMPTY);
+        String[] params = parseCurrentRowGetParams(currentRow);
+        String listname = params[col];
+        boolean isCreate = !listname.contains("!fe:");
+        listname = listname.replace("!fe:", "").replace("$fe:", "").replace("fe:", "").replace("{{", "");
         String[] keys = listname.replaceAll("\\s{1,}", " ").trim().split(" ");
-        paramsList.get(0).setName(keys[1]);
-        //保存这一行的样式是-后面好统一设置
-        List<XWPFTableCell> tempCellList = new ArrayList<>();
+        params[col] = keys[1];
+        List<XWPFTableCell> tempCellList = new ArrayList();
         tempCellList.addAll(table.getRow(index).getTableCells());
-        int                 cellIndex = 0;
-        Map<String, Object> tempMap   = Maps.newHashMap();
+//        int cellIndex = false;
+        Map<String, Object> tempMap = Maps.newHashMap();
         LOGGER.debug("start for each data list :{}", list.size());
-        for (Object obj : list) {
+        Iterator var11 = list.iterator();
+
+        while (var11.hasNext()) {
+            Object obj = var11.next();
             currentRow = isCreate ? table.insertNewTableRow(index++) : table.getRow(index++);
             tempMap.put("t", obj);
-            for (cellIndex = 0; cellIndex < currentRow.getTableCells().size(); cellIndex++) {
-                Object val = eval(paramsList.get(cellIndex).getName(), tempMap);
-                clearParagraphText(currentRow.getTableCells().get(cellIndex).getParagraphs());
-                if (val instanceof ImageEntity) {
-                    addAnImage((ImageEntity)val,tempCellList.get(cellIndex));
-                } else {
-                    PoiWordStyleUtil.copyCellAndSetValue(tempCellList.get(cellIndex),
-                            currentRow.getTableCells().get(cellIndex), val.toString());
+
+            //如果有合并单元格情况，会导致params越界,这里需要补齐
+            String[] paramsNew = (String[]) ArrayUtils.clone(params);
+            if (params.length < currentRow.getTableCells().size()) {
+                for (int i = 0; i < currentRow.getTableCells().size() - params.length; i++) {
+                    paramsNew = (String[]) ArrayUtils.add(paramsNew, 0, "placeholderLc_" + i);
                 }
             }
 
-            for (; cellIndex < paramsList.size(); cellIndex++) {
-                Object        val  = eval(paramsList.get(cellIndex).getName(), tempMap);
-                XWPFTableCell cell = currentRow.createCell();
-                if (paramsList.get(cellIndex).getColspan() > 1) {
-                    cell.getCTTc().addNewTcPr().addNewGridSpan().setVal(new BigInteger(paramsList.get(cellIndex).getColspan() + ""));
+            String val;
+            int cellIndex;
+            for (cellIndex = 0; cellIndex < currentRow.getTableCells().size(); ++cellIndex) {
+                val = PoiElUtil.eval(paramsNew[cellIndex], tempMap).toString();
+                //源代码的bug 此方法无法删除单元格中的内容
+                //currentRow.getTableCells().get(cellIndex).setText("");
+                //使用此方法清空单元格内容
+                if (!Strings.isNullOrEmpty(val)) {
+                    currentRow.getTableCells().get(cellIndex).getParagraphs().forEach(p -> p.getRuns().forEach(r -> r.setText("", 0)));
                 }
-                if (val instanceof ImageEntity) {
-                    addAnImage((ImageEntity)val,cell);
-                } else {
-                    PoiWordStyleUtil.copyCellAndSetValue(tempCellList.get(cellIndex),
-                            cell, val.toString());
-                }
+                PoiWordStyleUtil.copyCellAndSetValue(cellIndex >= tempCellList.size() ? tempCellList.get(tempCellList.size() - 1) : tempCellList.get(cellIndex)
+                        , currentRow.getTableCells().get(cellIndex), val);
+            }
+
+            while (cellIndex < paramsNew.length) {
+                val = PoiElUtil.eval(paramsNew[cellIndex], tempMap).toString();
+                PoiWordStyleUtil.copyCellAndSetValue((XWPFTableCell) tempCellList.get(cellIndex), currentRow.createCell(), val);
+                ++cellIndex;
             }
         }
-        table.removeRow(index);
 
+        table.removeRow(index);
     }
+
 
     private static void clearParagraphText(List<XWPFParagraph> paragraphs) {
         paragraphs.forEach(pp -> {
